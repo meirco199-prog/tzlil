@@ -227,3 +227,851 @@ tr:not(:last-child) td{border-bottom:1px solid var(--line)}
 .receipt-box .r-total{font-family:'Frank Ruhl Libre';font-weight:700;font-size:1.2rem;color:var(--rose-deep);border-top:2px solid var(--line);margin-top:8px;padding-top:10px}
 </style>
 </head>
+<body>
+
+<div id="lock"><div class="lock-card">
+  <svg class="logo" viewBox="0 0 48 48"><use href="#logoShape"/></svg>
+  <h1>צלילי הרגש</h1>
+  <div class="sub">מרכז לטיפול רגשי לילדים ונוער</div>
+  <div id="lockBody"></div>
+  <div class="lock-err" id="lockErr"></div>
+</div></div>
+
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <linearGradient id="rgGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#D9A08A"/><stop offset="1" stop-color="#A05A42"/>
+    </linearGradient>
+    <g id="logoShape">
+      <path d="M24 41C11.5 32 5 24 5 15.5 5 10.3 9.3 6 14.5 6 18.4 6 21.9 8.4 24 12 26.1 8.4 29.6 6 33.5 6 38.7 6 43 10.3 43 15.5 43 24 36.5 32 24 41Z" fill="none" stroke="url(#rgGrad)" stroke-width="3" stroke-linejoin="round"/>
+      <path d="M27 27V15l7-2v10" fill="none" stroke="url(#rgGrad)" stroke-width="2.4" stroke-linecap="round"/>
+      <circle cx="24.6" cy="27" r="2.6" fill="url(#rgGrad)"/>
+      <circle cx="31.6" cy="23" r="2.6" fill="url(#rgGrad)"/>
+    </g>
+  </defs>
+</svg>
+
+<header>
+  <svg class="logo" viewBox="0 0 48 48"><use href="#logoShape"/></svg>
+  <div>
+    <h1>צלילי הרגש</h1>
+    <div class="sub">מרכז לטיפול רגשי לילדים ונוער</div>
+  </div>
+  <div class="hdr-btns">
+    <button class="icon-btn" id="backBtn" onclick="goHome()">→ חזרה</button>
+    <button class="icon-btn" onclick="openSettings()">⚙️</button>
+  </div>
+</header>
+
+<main id="app"><div class="loading">טוען נתונים…</div></main>
+
+<div class="modal-bg" id="modalBg"><div class="modal" id="modalBox"></div></div>
+<div id="toast"></div>
+
+<script>
+/* ===== universal storage ===== */
+const PREFIX = 'merchav-rigshi:';
+let MEM = {};
+let storageMode = null;
+function detectStorage(){
+  if(storageMode) return storageMode;
+  if(window.storage && typeof window.storage.set === 'function'){ storageMode='claude'; }
+  else{
+    try{ localStorage.setItem(PREFIX+'__t','1'); localStorage.removeItem(PREFIX+'__t'); storageMode='local'; }
+    catch(e){ storageMode='memory'; setTimeout(()=>toast('שימו לב: הדפדפן חוסם שמירה — הנתונים לא יישמרו אחרי סגירה'),800); }
+  }
+  return storageMode;
+}
+async function sGet(key){
+  const mode = detectStorage();
+  try{
+    if(mode==='claude'){
+      try{ const r = await window.storage.get(key,false); return r?JSON.parse(r.value):null; }catch(e){ return null; }
+    }
+    if(mode==='local'){ const v = localStorage.getItem(PREFIX+key); return v?JSON.parse(v):null; }
+    return MEM[key]!==undefined ? JSON.parse(MEM[key]) : null;
+  }catch(e){ return null; }
+}
+async function sSet(key,val){
+  const mode = detectStorage();
+  const str = JSON.stringify(val);
+  try{
+    if(mode==='claude'){ const r = await window.storage.set(key,str,false); if(!r) throw 0; return true; }
+    if(mode==='local'){ localStorage.setItem(PREFIX+key,str); return true; }
+    MEM[key]=str; return true;
+  }catch(e){ toast('שמירה נכשלה — ייתכן שהזיכרון מלא. נסו למחוק מסמכים או ציורים ישנים'); return false; }
+}
+async function sDel(key){
+  const mode = detectStorage();
+  try{
+    if(mode==='claude'){ await window.storage.delete(key,false); }
+    else if(mode==='local'){ localStorage.removeItem(PREFIX+key); }
+    else{ delete MEM[key]; }
+  }catch(e){}
+}
+async function sha256(text){
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return [...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+
+/* ===== state ===== */
+let children = [], payments = [], settings = {};
+let currentChild = null, currentTab = 'notes', view = 'home';
+const KID_COLORS = ['#F2D5C4','#EAD9C8','#F6E0E0','#DCE5DA','#E4D8EC','#F7E9C9','#D9E4E6'];
+const app = document.getElementById('app');
+const backBtn = document.getElementById('backBtn');
+
+function toast(msg){
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(t._tm); t._tm = setTimeout(()=>t.classList.remove('show'),2600);
+}
+function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
+function esc(s){ return (s||'').toString().replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function fmtDate(iso){ if(!iso) return ''; return new Date(iso).toLocaleDateString('he-IL',{day:'numeric',month:'long',year:'numeric'}); }
+function fmtMoney(n){ return '₪' + Number(n||0).toLocaleString('he-IL'); }
+function monthLabel(ym){
+  const [y,m]=ym.split('-');
+  const names=['ינואר','פברואר','מרץ','אפריל','מאי','יוני','יולי','אוגוסט','ספטמבר','אוקטובר','נובמבר','דצמבר'];
+  return names[parseInt(m)-1]+' '+y;
+}
+function todayISO(){ return new Date().toISOString().slice(0,10); }
+function thisMonth(){ return new Date().toISOString().slice(0,7); }
+
+const modalBg = document.getElementById('modalBg');
+const modalBox = document.getElementById('modalBox');
+function openModal(html){ modalBox.innerHTML = html; modalBg.classList.add('open'); }
+function closeModal(){ modalBg.classList.remove('open'); modalBox.innerHTML=''; }
+modalBg.addEventListener('click', e => { if(e.target===modalBg) closeModal(); });
+
+/* ===== lock / password ===== */
+const lockEl = document.getElementById('lock');
+const lockBody = document.getElementById('lockBody');
+const lockErr = document.getElementById('lockErr');
+function showLock(){
+  lockBody.innerHTML = `
+    <input type="password" id="lockPin" placeholder="סיסמה" autocomplete="current-password">
+    <button class="btn btn-primary" style="width:100%;justify-content:center;margin-top:12px" onclick="tryUnlock()">כניסה</button>`;
+  lockEl.classList.add('show');
+  const inp = document.getElementById('lockPin');
+  inp.addEventListener('keydown', e=>{ if(e.key==='Enter') tryUnlock(); });
+  setTimeout(()=>inp.focus(),100);
+}
+async function tryUnlock(){
+  const v = document.getElementById('lockPin').value;
+  if(await sha256(v) === settings.pinHash){
+    lockEl.classList.remove('show'); lockErr.textContent='';
+  } else {
+    lockErr.textContent = 'סיסמה שגויה, נסי שוב';
+    document.getElementById('lockPin').value='';
+  }
+}
+function showSetupPin(){
+  lockBody.innerHTML = `
+    <div style="font-size:.9rem;color:var(--ink-soft);margin-bottom:12px">בחרי סיסמה שתגן על המידע באפליקציה</div>
+    <input type="password" id="pin1" placeholder="סיסמה חדשה" style="margin-bottom:8px">
+    <input type="password" id="pin2" placeholder="אימות סיסמה">
+    <button class="btn btn-primary" style="width:100%;justify-content:center;margin-top:12px" onclick="setupPin()">שמירת סיסמה</button>
+    <button class="btn btn-ghost" style="width:100%;justify-content:center;margin-top:8px" onclick="skipPin()">בלי סיסמה בינתיים</button>`;
+  lockEl.classList.add('show');
+}
+async function setupPin(){
+  const p1=document.getElementById('pin1').value, p2=document.getElementById('pin2').value;
+  if(p1.length<4){ lockErr.textContent='סיסמה של 4 תווים לפחות'; return; }
+  if(p1!==p2){ lockErr.textContent='הסיסמאות לא זהות'; return; }
+  settings.pinHash = await sha256(p1);
+  await sSet('settings',settings);
+  lockEl.classList.remove('show'); lockErr.textContent='';
+  toast('הסיסמה נשמרה ✓');
+}
+async function skipPin(){
+  settings.pinSkipped = true;
+  await sSet('settings',settings);
+  lockEl.classList.remove('show');
+}
+
+/* ===== settings ===== */
+function openSettings(){
+  openModal(`
+    <h2>⚙️ הגדרות</h2>
+    <div class="hint" style="margin-bottom:14px">צלילי הרגש · צליל הדסה יפרח</div>
+
+    <label>${settings.pinHash ? 'שינוי סיסמה' : 'הגדרת סיסמה'}</label>
+    ${settings.pinHash ? `<input type="password" id="s_old" placeholder="סיסמה נוכחית" style="margin-bottom:8px">` : ''}
+    <input type="password" id="s_new1" placeholder="סיסמה חדשה" style="margin-bottom:8px">
+    <input type="password" id="s_new2" placeholder="אימות סיסמה חדשה">
+    <button class="btn btn-ghost btn-small" style="margin-top:10px" onclick="changePin()">עדכון סיסמה</button>
+
+    <label style="margin-top:22px">גיבוי המידע</label>
+    <div class="hint" style="margin-top:0">שומר קובץ גיבוי עם כל הילדים, המעקבים, המסמכים, הציורים והתשלומים. מומלץ לגבות פעם בשבוע ולשמור בוואטסאפ/דרייב.</div>
+    <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+      <button class="btn btn-sun btn-small" onclick="exportBackup()">⬇️ הורדת קובץ גיבוי</button>
+      <button class="btn btn-ghost btn-small" onclick="document.getElementById('importInput').click()">⬆️ שחזור מגיבוי</button>
+      <input type="file" id="importInput" class="hidden" accept=".json,application/json" onchange="importBackup(this)">
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn btn-primary" onclick="closeModal()">סגירה</button>
+    </div>
+  `);
+}
+async function changePin(){
+  const n1=document.getElementById('s_new1').value, n2=document.getElementById('s_new2').value;
+  if(settings.pinHash){
+    const old=document.getElementById('s_old').value;
+    if(await sha256(old)!==settings.pinHash){ toast('הסיסמה הנוכחית שגויה'); return; }
+  }
+  if(n1.length<4){ toast('סיסמה של 4 תווים לפחות'); return; }
+  if(n1!==n2){ toast('הסיסמאות החדשות לא זהות'); return; }
+  settings.pinHash = await sha256(n1);
+  delete settings.pinSkipped;
+  if(await sSet('settings',settings)){ toast('הסיסמה עודכנה ✓'); closeModal(); }
+}
+
+/* ===== backup ===== */
+async function exportBackup(){
+  toast('מכין גיבוי…');
+  const data = { app:'tzlilei-haregesh', exportedAt:new Date().toISOString(), children, payments, settings, perChild:{} };
+  for(const c of children){
+    const notes = (await sGet('notes:'+c.id)) || [];
+    const fidx  = (await sGet('fidx:'+c.id)) || [];
+    const didx  = (await sGet('didx:'+c.id)) || [];
+    const files = {}, draws = {};
+    for(const f of fidx){ files[f.id] = await sGet('file:'+f.id); }
+    for(const d of didx){ draws[d.id] = await sGet('draw:'+d.id); }
+    data.perChild[c.id] = { notes, fidx, didx, files, draws };
+  }
+  const blob = new Blob([JSON.stringify(data)],{type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'גיבוי-צלילי-הרגש-' + todayISO() + '.json';
+  a.click();
+  URL.revokeObjectURL(a.href);
+  toast('קובץ הגיבוי ירד ✓ שמרי אותו במקום בטוח');
+}
+async function importBackup(input){
+  const file = input.files[0];
+  if(!file) return;
+  try{
+    const text = await file.text();
+    const data = JSON.parse(text);
+    if(data.app!=='tzlilei-haregesh' || !Array.isArray(data.children)) throw 0;
+    if(!confirm('שחזור מגיבוי יחליף את כל המידע הנוכחי באפליקציה. להמשיך?')){ input.value=''; return; }
+    children = data.children; payments = data.payments||[];
+    const keepPin = settings.pinHash;
+    settings = data.settings||{};
+    if(keepPin && !settings.pinHash) settings.pinHash = keepPin;
+    await sSet('children',children);
+    await sSet('payments',payments);
+    await sSet('settings',settings);
+    for(const cid in (data.perChild||{})){
+      const pc = data.perChild[cid];
+      await sSet('notes:'+cid, pc.notes||[]);
+      await sSet('fidx:'+cid, pc.fidx||[]);
+      await sSet('didx:'+cid, pc.didx||[]);
+      for(const fid in (pc.files||{})) if(pc.files[fid]) await sSet('file:'+fid, pc.files[fid]);
+      for(const did in (pc.draws||{})) if(pc.draws[did]) await sSet('draw:'+did, pc.draws[did]);
+    }
+    toast('השחזור הושלם ✓');
+    closeModal(); goHome();
+  }catch(e){ toast('קובץ הגיבוי לא תקין'); }
+  input.value='';
+}
+
+/* ===== init ===== */
+async function init(){
+  children = (await sGet('children')) || [];
+  payments = (await sGet('payments')) || [];
+  settings = (await sGet('settings')) || null;
+  if(settings && settings.pinHash){ showLock(); }
+  else if(!settings){ settings={}; showSetupPin(); }
+  goHome();
+}
+
+/* ===== HOME ===== */
+function goHome(){ view='home'; currentChild=null; backBtn.style.display='none'; renderHome(); }
+function renderHome(){
+  let kidsHtml;
+  if(children.length===0){
+    kidsHtml = `<div class="empty-state"><div class="big">🧸</div><div>עדיין אין ילדים במערכת.<br>לחצי על ״הוספת ילד/ה״ כדי להתחיל.</div></div>`;
+  } else {
+    kidsHtml = `<div class="kids-grid">` + children.map(c=>`
+      <div class="kid-card" style="--kid-color:${c.color}" onclick="openChild('${c.id}')">
+        <div class="kid-avatar">${esc(c.name.charAt(0))}</div>
+        <h3>${esc(c.name)}</h3>
+        <div class="meta">${c.age?'גיל '+esc(c.age):''}${c.age&&c.parent?' · ':''}${c.parent?esc(c.parent):''}</div>
+      </div>`).join('') + `</div>`;
+  }
+  const monthSum = payments.filter(p=>p.month===thisMonth()).reduce((a,p)=>a+Number(p.amount),0);
+  app.innerHTML = `
+    <div class="top-actions">
+      <button class="btn btn-primary" onclick="openAddChild()">＋ הוספת ילד/ה</button>
+      <button class="btn btn-sun" onclick="goMonthly()">💰 מעקב תשלומים חודשי</button>
+    </div>
+    <div class="pay-summary" style="margin-top:16px">
+      <div class="pay-box"><div class="num">${children.length}</div><div class="lbl">ילדים בטיפול</div></div>
+      <div class="pay-box"><div class="num">${fmtMoney(monthSum)}</div><div class="lbl">התקבל ב${monthLabel(thisMonth())}</div></div>
+    </div>
+    <div class="section-title"><h2>הילדים שלי</h2><div class="scribble"></div></div>
+    ${kidsHtml}`;
+}
+
+/* ===== add / edit child ===== */
+function openAddChild(editId){
+  const c = editId ? children.find(x=>x.id===editId) : null;
+  openModal(`
+    <h2>${c?'עריכת פרטי ילד/ה':'הוספת ילד/ה'}</h2>
+    <label>שם *</label>
+    <input id="f_name" value="${c?esc(c.name):''}" placeholder="שם הילד/ה">
+    <label>גיל</label>
+    <input id="f_age" inputmode="numeric" value="${c?esc(c.age||''):''}" placeholder="למשל 9">
+    <label>שם ההורה / איש קשר</label>
+    <input id="f_parent" value="${c?esc(c.parent||''):''}" placeholder="שם ההורה">
+    <label>טלפון</label>
+    <input id="f_phone" inputmode="tel" value="${c?esc(c.phone||''):''}" placeholder="050-0000000">
+    <label>רקע כללי / סיבת פנייה</label>
+    <textarea id="f_bg" placeholder="מידע רקע חשוב…">${c?esc(c.bg||''):''}</textarea>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal()">ביטול</button>
+      <button class="btn btn-primary" onclick="saveChild('${editId||''}')">שמירה</button>
+    </div>`);
+}
+async function saveChild(editId){
+  const name = document.getElementById('f_name').value.trim();
+  if(!name){ toast('חסר שם'); return; }
+  const data = {
+    name,
+    age: document.getElementById('f_age').value.trim(),
+    parent: document.getElementById('f_parent').value.trim(),
+    phone: document.getElementById('f_phone').value.trim(),
+    bg: document.getElementById('f_bg').value.trim(),
+  };
+  if(editId){ Object.assign(children.find(x=>x.id===editId), data); }
+  else{ children.push({ id:uid(), color:KID_COLORS[children.length%KID_COLORS.length], createdAt:todayISO(), ...data }); }
+  if(await sSet('children',children)){
+    closeModal(); toast('נשמר ✓');
+    if(view==='child'&&currentChild) renderChild(); else renderHome();
+  }
+}
+function confirmDeleteChild(id){
+  const c = children.find(x=>x.id===id);
+  openModal(`
+    <h2>מחיקת ${esc(c.name)}</h2>
+    <p style="margin-top:8px;color:var(--ink-soft);font-size:.92rem">פעולה זו תמחק את כרטיס הילד/ה כולל כל התיעוד, המסמכים, הציורים והתשלומים. לא ניתן לשחזר.</p>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal()">ביטול</button>
+      <button class="btn btn-danger" onclick="deleteChild('${id}')">כן, למחוק</button>
+    </div>`);
+}
+async function deleteChild(id){
+  children = children.filter(x=>x.id!==id);
+  await sSet('children',children);
+  payments = payments.filter(p=>p.childId!==id);
+  await sSet('payments',payments);
+  await sDel('notes:'+id);
+  const fidx = (await sGet('fidx:'+id))||[];
+  for(const f of fidx) await sDel('file:'+f.id);
+  await sDel('fidx:'+id);
+  const didx = (await sGet('didx:'+id))||[];
+  for(const d of didx) await sDel('draw:'+d.id);
+  await sDel('didx:'+id);
+  closeModal(); toast('נמחק'); goHome();
+}
+
+/* ===== CHILD PAGE ===== */
+function openChild(id){
+  currentChild = children.find(x=>x.id===id);
+  view='child'; currentTab='notes';
+  backBtn.style.display='inline-flex';
+  renderChild();
+}
+function setTab(t){ currentTab=t; renderChild(); }
+async function renderChild(){
+  const c = currentChild;
+  app.innerHTML = `
+    <div class="child-header">
+      <div class="kid-avatar" style="background:${c.color}">${esc(c.name.charAt(0))}</div>
+      <div class="info">
+        <h2>${esc(c.name)}</h2>
+        <div class="meta">${c.age?'גיל '+esc(c.age):''}${c.parent?' · הורה: '+esc(c.parent):''}${c.phone?' · '+esc(c.phone):''}</div>
+      </div>
+    </div>
+    ${c.bg?`<div class="card" style="margin-top:10px;font-size:.9rem;color:var(--ink-soft)">📋 ${esc(c.bg)}</div>`:''}
+    <div class="top-actions" style="margin-top:12px">
+      <button class="btn btn-ghost btn-small" onclick="openAddChild('${c.id}')">✏️ עריכת פרטים</button>
+      <button class="btn btn-danger btn-small" onclick="confirmDeleteChild('${c.id}')">🗑 מחיקה</button>
+    </div>
+    <div class="tabs">
+      <button class="tab ${currentTab==='notes'?'active':''}" onclick="setTab('notes')">📝 מעקב</button>
+      <button class="tab ${currentTab==='files'?'active':''}" onclick="setTab('files')">📎 מסמכים</button>
+      <button class="tab ${currentTab==='draw'?'active':''}" onclick="setTab('draw')">🖍️ ציור</button>
+      <button class="tab ${currentTab==='pay'?'active':''}" onclick="setTab('pay')">💰 תשלומים</button>
+    </div>
+    <div id="tabContent"><div class="loading">טוען…</div></div>`;
+  if(currentTab==='notes') renderNotes();
+  else if(currentTab==='files') renderFiles();
+  else if(currentTab==='draw') renderDraw();
+  else renderChildPay();
+}
+
+/* ===== notes ===== */
+async function renderNotes(){
+  const notes = (await sGet('notes:'+currentChild.id))||[];
+  notes.sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  document.getElementById('tabContent').innerHTML = `
+    <button class="btn btn-primary" onclick="openAddNote()">＋ רישום מעקב חדש</button>
+    <div style="margin-top:14px">
+      ${notes.length===0
+        ? `<div class="empty-state"><div class="big">📝</div>אין עדיין רישומי מעקב.<br>כאן מתעדים פגישות, התרשמויות והתקדמות.</div>`
+        : notes.map(n=>`
+          <div class="item-row">
+            <div class="item-head"><strong>${esc(n.title||'רישום מעקב')}</strong><span class="item-date">${fmtDate(n.date)}</span></div>
+            <div class="item-body">${esc(n.text)}</div>
+            <div class="item-actions">
+              <button class="btn btn-ghost btn-small" onclick="openAddNote('${n.id}')">עריכה</button>
+              <button class="btn btn-danger btn-small" onclick="deleteNote('${n.id}')">מחיקה</button>
+            </div>
+          </div>`).join('')}
+    </div>`;
+}
+async function openAddNote(editId){
+  const notes = (await sGet('notes:'+currentChild.id))||[];
+  const n = editId ? notes.find(x=>x.id===editId) : null;
+  openModal(`
+    <h2>${n?'עריכת רישום':'רישום מעקב חדש'}</h2>
+    <label>תאריך</label>
+    <input id="n_date" type="date" value="${n?n.date:todayISO()}">
+    <label>כותרת</label>
+    <input id="n_title" value="${n?esc(n.title||''):''}" placeholder="למשל: פגישה שבועית, שיחת הורים…">
+    <label>תוכן המעקב</label>
+    <textarea id="n_text" style="min-height:140px" placeholder="מה עלה בפגישה, התרשמות, מטרות להמשך…">${n?esc(n.text):''}</textarea>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal()">ביטול</button>
+      <button class="btn btn-primary" onclick="saveNote('${editId||''}')">שמירה</button>
+    </div>`);
+}
+async function saveNote(editId){
+  const text = document.getElementById('n_text').value.trim();
+  if(!text){ toast('הרישום ריק'); return; }
+  const notes = (await sGet('notes:'+currentChild.id))||[];
+  const data = { date:document.getElementById('n_date').value||todayISO(), title:document.getElementById('n_title').value.trim(), text };
+  if(editId){ Object.assign(notes.find(x=>x.id===editId), data); }
+  else{ notes.push({ id:uid(), ...data }); }
+  if(await sSet('notes:'+currentChild.id, notes)){ closeModal(); toast('נשמר ✓'); renderNotes(); }
+}
+async function deleteNote(id){
+  let notes = (await sGet('notes:'+currentChild.id))||[];
+  notes = notes.filter(x=>x.id!==id);
+  await sSet('notes:'+currentChild.id, notes);
+  toast('נמחק'); renderNotes();
+}
+
+/* ===== files ===== */
+async function renderFiles(){
+  const idx = (await sGet('fidx:'+currentChild.id))||[];
+  idx.sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  document.getElementById('tabContent').innerHTML = `
+    <button class="btn btn-primary" onclick="document.getElementById('fileInput').click()">＋ העלאת מסמך</button>
+    <input type="file" id="fileInput" class="hidden" accept="image/*,.pdf" onchange="uploadFile(this)">
+    <div class="hint">אפשר להעלות תמונות וקבצי PDF עד ‎3MB (אבחונים, סיכומים, טפסים…)</div>
+    <div style="margin-top:14px">
+      ${idx.length===0
+        ? `<div class="empty-state"><div class="big">📎</div>אין עדיין מסמכים.<br>העלי כאן אבחונים, סיכומים ומסמכי מעקב.</div>`
+        : idx.map(f=>`
+          <div class="item-row">
+            <div class="item-head">
+              <strong>${f.type==='application/pdf'?'📄':'🖼️'} ${esc(f.name)}</strong>
+              <span class="item-date">${fmtDate(f.date)} · ${(f.size/1024).toFixed(0)}KB</span>
+            </div>
+            <div class="item-actions">
+              <button class="btn btn-ghost btn-small" onclick="viewFile('${f.id}')">צפייה / הורדה</button>
+              <button class="btn btn-ghost btn-small" onclick="openRenameFile('${f.id}')">✏️ שינוי שם</button>
+              <button class="btn btn-danger btn-small" onclick="deleteFile('${f.id}')">מחיקה</button>
+            </div>
+          </div>`).join('')}
+    </div>`;
+}
+async function uploadFile(input){
+  const file = input.files[0];
+  if(!file) return;
+  if(file.size>3*1024*1024){ toast('הקובץ גדול מדי (מעל 3MB)'); input.value=''; return; }
+  toast('מעלה…');
+  const dataUrl = await new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.onerror=()=>rej(); r.readAsDataURL(file); });
+  const id = uid();
+  const ok = await sSet('file:'+id,{ data:dataUrl, name:file.name, type:file.type });
+  if(!ok){ input.value=''; return; }
+  const idx = (await sGet('fidx:'+currentChild.id))||[];
+  idx.push({ id, name:file.name, type:file.type, size:file.size, date:todayISO() });
+  await sSet('fidx:'+currentChild.id, idx);
+  input.value=''; toast('המסמך נשמר ✓'); renderFiles();
+}
+async function openRenameFile(id){
+  const idx = (await sGet('fidx:'+currentChild.id))||[];
+  const f = idx.find(x=>x.id===id);
+  if(!f) return;
+  openModal(`
+    <h2>שינוי שם מסמך</h2>
+    <label>שם חדש</label>
+    <input id="rn_name" value="${esc(f.name)}">
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal()">ביטול</button>
+      <button class="btn btn-primary" onclick="renameFile('${id}')">שמירה</button>
+    </div>`);
+}
+async function renameFile(id){
+  const newName = document.getElementById('rn_name').value.trim();
+  if(!newName){ toast('חסר שם'); return; }
+  const idx = (await sGet('fidx:'+currentChild.id))||[];
+  const f = idx.find(x=>x.id===id);
+  if(f) f.name = newName;
+  await sSet('fidx:'+currentChild.id, idx);
+  const rec = await sGet('file:'+id);
+  if(rec){ rec.name = newName; await sSet('file:'+id, rec); }
+  closeModal(); toast('השם עודכן ✓'); renderFiles();
+}
+async function viewFile(id){
+  const f = await sGet('file:'+id);
+  if(!f){ toast('הקובץ לא נמצא'); return; }
+  if(f.type && f.type.startsWith('image/')){
+    openModal(`
+      <h2>${esc(f.name)}</h2>
+      <img src="${f.data}" style="width:100%;border-radius:12px;margin-top:10px;border:1px solid var(--line)">
+      <div class="modal-actions">
+        <a class="btn btn-primary" style="justify-content:center;text-decoration:none" href="${f.data}" download="${esc(f.name)}">⬇️ הורדה</a>
+        <button class="btn btn-ghost" onclick="closeModal()">סגירה</button>
+      </div>`);
+  } else {
+    const a = document.createElement('a');
+    a.href=f.data; a.download=f.name; a.click();
+  }
+}
+async function deleteFile(id){
+  await sDel('file:'+id);
+  let idx = (await sGet('fidx:'+currentChild.id))||[];
+  idx = idx.filter(x=>x.id!==id);
+  await sSet('fidx:'+currentChild.id, idx);
+  toast('נמחק'); renderFiles();
+}
+
+/* ===== drawing ===== */
+const CRAYONS = ['#E63946','#F77F00','#FFC145','#2A9D34','#177E89','#3A5BD9','#8E44AD','#E85D9A','#8B5A2B','#1F3A43'];
+let drawColor = CRAYONS[0], drawSize = 6, erasing = false, textMode = false;
+async function renderDraw(){
+  const idx = (await sGet('didx:'+currentChild.id))||[];
+  idx.sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  document.getElementById('tabContent').innerHTML = `
+    <div class="draw-wrap">
+      <div class="draw-toolbar" id="crayons">
+        ${CRAYONS.map(c=>`<div class="crayon ${c===drawColor&&!erasing&&!textMode?'sel':''}" style="background:${c}" onclick="pickColor('${c}')"></div>`).join('')}
+        <button class="size-btn ${erasing?'sel':''}" title="מחק" onclick="pickEraser()">🧽</button>
+        <button class="size-btn ${textMode?'sel':''}" title="כתיבת טקסט" onclick="pickText()">א</button>
+      </div>
+      <div class="draw-toolbar">
+        ${[3,6,12,22].map(s=>`
+          <button class="size-btn ${s===drawSize?'sel':''}" onclick="pickSize(${s})">
+            <span class="size-dot" style="width:${Math.min(s,20)}px;height:${Math.min(s,20)}px"></span>
+          </button>`).join('')}
+        <span style="flex:1"></span>
+        <button class="btn btn-ghost btn-small" onclick="document.getElementById('drawImgInput').click()">🖼️ תמונה לציור</button>
+        <input type="file" id="drawImgInput" class="hidden" accept="image/*" onchange="loadImageToCanvas(this)">
+        <button class="btn btn-ghost btn-small" onclick="undoDraw()">↩️ בטל</button>
+        <button class="btn btn-ghost btn-small" onclick="clearCanvas()">🗑 נקה</button>
+        <button class="btn btn-sun btn-small" onclick="saveDrawing()">💾 שמירת ציור</button>
+      </div>
+      <canvas id="canvas" width="900" height="620"></canvas>
+      <div class="hint">אפשר להעלות תמונה (דף עבודה, מנדלה, תמונה אישית) ולצייר או לכתוב עליה. כפתור ״א״ = כתיבת טקסט בלחיצה על הציור.</div>
+    </div>
+    <div class="section-title"><h2>הציורים של ${esc(currentChild.name)}</h2><div class="scribble"></div></div>
+    ${idx.length===0
+      ? `<div class="empty-state"><div class="big">🎨</div>עדיין אין ציורים שמורים.</div>`
+      : `<div class="gallery">${idx.map(d=>`
+          <div class="gal-item">
+            <img data-did="${d.id}" alt="ציור">
+            <div class="meta">${fmtDate(d.date)}</div>
+            <button class="btn btn-danger btn-small" onclick="deleteDrawing('${d.id}')">מחיקה</button>
+          </div>`).join('')}</div>`}`;
+  setupCanvas();
+  for(const d of idx){
+    const rec = await sGet('draw:'+d.id);
+    const img = document.querySelector(`img[data-did="${d.id}"]`);
+    if(img&&rec) img.src = rec.data;
+  }
+}
+function pickColor(c){ drawColor=c; erasing=false; textMode=false; refreshTools(); }
+function pickEraser(){ erasing=true; textMode=false; refreshTools(); }
+function pickText(){ textMode=!textMode; erasing=false; refreshTools(); if(textMode) toast('לחצי על הציור במקום שבו תרצי לכתוב'); }
+function pickSize(s){ drawSize=s; refreshTools(); }
+function refreshTools(){
+  document.querySelectorAll('#crayons .crayon').forEach((el,i)=>{
+    el.classList.toggle('sel', CRAYONS[i]===drawColor && !erasing && !textMode);
+  });
+  document.querySelectorAll('.size-btn').forEach(el=>{
+    const t = el.textContent.trim();
+    if(t==='🧽') el.classList.toggle('sel', erasing);
+    else if(t==='א') el.classList.toggle('sel', textMode);
+  });
+  document.querySelectorAll('.size-btn .size-dot').forEach(dot=>{
+    const s = parseInt(dot.style.width);
+    dot.parentElement.classList.toggle('sel', s===Math.min(drawSize,20));
+  });
+}
+let cvs, ctx, drawing=false, undoStack=[];
+function pushUndo(){ if(undoStack.length>=12) undoStack.shift(); undoStack.push(ctx.getImageData(0,0,cvs.width,cvs.height)); }
+function setupCanvas(){
+  cvs = document.getElementById('canvas');
+  ctx = cvs.getContext('2d');
+  ctx.fillStyle='#fff'; ctx.fillRect(0,0,cvs.width,cvs.height);
+  ctx.lineCap='round'; ctx.lineJoin='round';
+  undoStack=[];
+  const pos = e => {
+    const r = cvs.getBoundingClientRect();
+    return { x:(e.clientX-r.left)*(cvs.width/r.width), y:(e.clientY-r.top)*(cvs.height/r.height) };
+  };
+  cvs.onpointerdown = e => {
+    e.preventDefault();
+    const p = pos(e);
+    if(textMode){
+      const txt = prompt('מה לכתוב?');
+      if(txt){
+        pushUndo();
+        ctx.fillStyle = drawColor;
+        ctx.font = (drawSize*5+10) + 'px Varela Round';
+        ctx.textAlign = 'center';
+        ctx.fillText(txt, p.x, p.y);
+      }
+      return;
+    }
+    cvs.setPointerCapture(e.pointerId);
+    pushUndo();
+    drawing=true;
+    ctx.beginPath(); ctx.moveTo(p.x,p.y); ctx.lineTo(p.x+0.1,p.y+0.1);
+    strokeNow();
+  };
+  cvs.onpointermove = e => {
+    if(!drawing) return;
+    e.preventDefault();
+    const p = pos(e);
+    ctx.lineTo(p.x,p.y);
+    strokeNow();
+  };
+  cvs.onpointerup = cvs.onpointercancel = ()=>{ drawing=false; };
+}
+function strokeNow(){
+  ctx.strokeStyle = erasing ? '#ffffff' : drawColor;
+  ctx.lineWidth = erasing ? drawSize*3 : drawSize;
+  ctx.stroke();
+}
+function undoDraw(){ if(undoStack.length===0) return; ctx.putImageData(undoStack.pop(),0,0); }
+function clearCanvas(){ pushUndo(); ctx.fillStyle='#fff'; ctx.fillRect(0,0,cvs.width,cvs.height); }
+async function loadImageToCanvas(input){
+  const file = input.files[0];
+  if(!file) return;
+  const url = URL.createObjectURL(file);
+  const img = new Image();
+  img.onload = ()=>{
+    pushUndo();
+    ctx.fillStyle='#fff'; ctx.fillRect(0,0,cvs.width,cvs.height);
+    const scale = Math.min(cvs.width/img.width, cvs.height/img.height);
+    const w = img.width*scale, h = img.height*scale;
+    ctx.drawImage(img, (cvs.width-w)/2, (cvs.height-h)/2, w, h);
+    URL.revokeObjectURL(url);
+    toast('התמונה נטענה — אפשר לצייר ולכתוב עליה 🎨');
+  };
+  img.src = url;
+  input.value='';
+}
+async function saveDrawing(){
+  const data = cvs.toDataURL('image/jpeg',0.82);
+  const id = uid();
+  const ok = await sSet('draw:'+id,{ data });
+  if(!ok) return;
+  const idx = (await sGet('didx:'+currentChild.id))||[];
+  idx.push({ id, date:todayISO() });
+  await sSet('didx:'+currentChild.id, idx);
+  toast('הציור נשמר ✓ 🎨'); renderDraw();
+}
+async function deleteDrawing(id){
+  await sDel('draw:'+id);
+  let idx = (await sGet('didx:'+currentChild.id))||[];
+  idx = idx.filter(x=>x.id!==id);
+  await sSet('didx:'+currentChild.id, idx);
+  toast('נמחק'); renderDraw();
+}
+
+/* ===== payments ===== */
+function renderChildPay(){
+  const list = payments.filter(p=>p.childId===currentChild.id).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  const total = list.reduce((a,p)=>a+Number(p.amount),0);
+  const monthTotal = list.filter(p=>p.month===thisMonth()).reduce((a,p)=>a+Number(p.amount),0);
+  document.getElementById('tabContent').innerHTML = `
+    <div class="pay-summary">
+      <div class="pay-box"><div class="num">${fmtMoney(monthTotal)}</div><div class="lbl">${monthLabel(thisMonth())}</div></div>
+      <div class="pay-box"><div class="num">${fmtMoney(total)}</div><div class="lbl">סה״כ שולם</div></div>
+    </div>
+    <button class="btn btn-primary" onclick="openAddPayment('${currentChild.id}')">＋ רישום תשלום</button>
+    <div style="margin-top:14px">${payRows(list)}</div>`;
+}
+function payRows(list){
+  if(list.length===0) return `<div class="empty-state"><div class="big">💰</div>עדיין לא נרשמו תשלומים.</div>`;
+  return list.map(p=>{
+    const c = children.find(x=>x.id===p.childId);
+    return `<div class="item-row">
+      <div class="item-head">
+        <strong>${view==='monthly'&&c?esc(c.name)+' — ':''}${fmtMoney(p.amount)}</strong>
+        <span class="item-date">${fmtDate(p.date)}</span>
+        ${p.method?`<span class="item-date">${esc(p.method)}</span>`:''}
+        ${p.receiptNo?`<span class="item-date">אישור מס׳ ${p.receiptNo}</span>`:''}
+      </div>
+      ${p.note?`<div class="item-body">${esc(p.note)}</div>`:''}
+      <div class="item-actions">
+        <button class="btn btn-sun btn-small" onclick="openReceipt('${p.id}')">🧾 אישור תשלום</button>
+        <button class="btn btn-danger btn-small" onclick="deletePayment('${p.id}')">מחיקה</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+function openAddPayment(childId){
+  const opts = children.map(c=>`<option value="${c.id}" ${c.id===childId?'selected':''}>${esc(c.name)}</option>`).join('');
+  openModal(`
+    <h2>רישום תשלום</h2>
+    <label>ילד/ה</label>
+    <select id="p_child">${opts}</select>
+    <label>סכום (₪) *</label>
+    <input id="p_amount" inputmode="decimal" placeholder="למשל 350">
+    <label>תאריך</label>
+    <input id="p_date" type="date" value="${todayISO()}">
+    <label>אופן תשלום</label>
+    <select id="p_method">
+      <option value="">— בחרי —</option>
+      <option>מזומן</option><option>ביט</option><option>העברה בנקאית</option>
+      <option>אשראי</option><option>צ׳ק</option><option>פייבוקס</option>
+    </select>
+    <label>הערה</label>
+    <input id="p_note" placeholder="למשל: עבור 4 מפגשים">
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal()">ביטול</button>
+      <button class="btn btn-primary" onclick="savePayment()">שמירה</button>
+    </div>`);
+}
+async function savePayment(){
+  const amount = parseFloat(document.getElementById('p_amount').value);
+  if(!amount||amount<=0){ toast('נא להזין סכום תקין'); return; }
+  const date = document.getElementById('p_date').value||todayISO();
+  const p = {
+    id:uid(),
+    childId:document.getElementById('p_child').value,
+    amount, date, month:date.slice(0,7),
+    method:document.getElementById('p_method').value,
+    note:document.getElementById('p_note').value.trim()
+  };
+  payments.push(p);
+  if(await sSet('payments',payments)){
+    closeModal(); toast('התשלום נרשם ✓');
+    if(view==='child') renderChildPay(); else renderMonthly();
+  }
+}
+async function deletePayment(id){
+  payments = payments.filter(p=>p.id!==id);
+  await sSet('payments',payments);
+  toast('נמחק');
+  if(view==='child') renderChildPay(); else renderMonthly();
+}
+
+/* ===== payment confirmation (receipt-style) ===== */
+async function openReceipt(pid){
+  const p = payments.find(x=>x.id===pid);
+  if(!p) return;
+  const c = children.find(x=>x.id===p.childId);
+  if(!p.receiptNo){
+    settings.receiptCounter = (settings.receiptCounter||0)+1;
+    p.receiptNo = settings.receiptCounter;
+    await sSet('settings',settings);
+    await sSet('payments',payments);
+  }
+  openModal(`
+    <h2>🧾 אישור תשלום</h2>
+    <div class="receipt-box" id="receiptPrint">
+      <div class="r-head">
+        <svg width="38" height="38" viewBox="0 0 48 48"><use href="#logoShape"/></svg>
+        <div>
+          <div style="font-family:'Frank Ruhl Libre';font-weight:700;font-size:1.15rem;color:var(--rose-deep)">צלילי הרגש</div>
+          <div style="font-size:.75rem;color:var(--ink-soft)">מרכז לטיפול רגשי לילדים ונוער · צליל הדסה יפרח · 054-2082240</div>
+        </div>
+      </div>
+      <div class="r-row"><span>אישור תשלום מס׳</span><strong>${p.receiptNo}</strong></div>
+      <div class="r-row"><span>תאריך</span><span>${fmtDate(p.date)}</span></div>
+      <div class="r-row"><span>עבור</span><span>${c?esc(c.name):'—'}${c&&c.parent?' (הורה: '+esc(c.parent)+')':''}</span></div>
+      ${p.method?`<div class="r-row"><span>אופן תשלום</span><span>${esc(p.method)}</span></div>`:''}
+      ${p.note?`<div class="r-row"><span>פירוט</span><span>${esc(p.note)}</span></div>`:''}
+      <div class="r-row r-total"><span>סכום ששולם</span><span>${fmtMoney(p.amount)}</span></div>
+      <div style="font-size:.7rem;color:var(--ink-soft);margin-top:12px;text-align:center">אישור זה מונפק לנוחות המעקב ואינו מהווה קבלה רשמית לצורכי מס</div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" onclick="printReceipt()">🖨 הדפסה / שמירה כ-PDF</button>
+      <button class="btn btn-ghost" onclick="closeModal()">סגירה</button>
+    </div>`);
+}
+function printReceipt(){
+  const content = document.getElementById('receiptPrint').outerHTML;
+  const defs = document.querySelector('svg[width="0"]').outerHTML;
+  const w = window.open('','_blank');
+  if(!w){ toast('הדפדפן חסם את חלון ההדפסה — אפשרי צילום מסך'); return; }
+  w.document.write(`<!DOCTYPE html><html lang="he" dir="rtl"><head><meta charset="UTF-8"><title>אישור תשלום — צלילי הרגש</title>
+    <link href="https://fonts.googleapis.com/css2?family=Varela+Round&family=Frank+Ruhl+Libre:wght@700&display=swap" rel="stylesheet">
+    <style>
+      body{font-family:'Varela Round',sans-serif;color:#4A342B;padding:30px;background:#fff}
+      .receipt-box{border:2px solid #EBDCD1;border-radius:14px;padding:22px;max-width:480px;margin:0 auto;background:#FDFAF7}
+      .r-head{display:flex;align-items:center;gap:10px;border-bottom:2px solid #EBDCD1;padding-bottom:10px;margin-bottom:12px}
+      .r-row{display:flex;justify-content:space-between;padding:5px 0;font-size:.95rem}
+      .r-total{font-family:'Frank Ruhl Libre';font-weight:700;font-size:1.25rem;color:#96543F;border-top:2px solid #EBDCD1;margin-top:8px;padding-top:10px}
+    </style></head><body>${defs}${content}<script>setTimeout(()=>window.print(),600)<\/script></body></html>`);
+  w.document.close();
+}
+
+/* ===== monthly ===== */
+let selMonth = thisMonth();
+function goMonthly(){ view='monthly'; backBtn.style.display='inline-flex'; renderMonthly(); }
+function shiftMonth(d){
+  const [y,m] = selMonth.split('-').map(Number);
+  selMonth = new Date(y, m-1+d, 1).toISOString().slice(0,7);
+  renderMonthly();
+}
+function renderMonthly(){
+  const list = payments.filter(p=>p.month===selMonth);
+  const perChild = {};
+  list.forEach(p=>{ perChild[p.childId]=(perChild[p.childId]||0)+Number(p.amount); });
+  const total = list.reduce((a,p)=>a+Number(p.amount),0);
+  const rows = Object.entries(perChild).map(([cid,sum])=>{
+    const c = children.find(x=>x.id===cid);
+    const count = list.filter(p=>p.childId===cid).length;
+    return `<tr><td>${c?esc(c.name):'—'}</td><td>${count}</td><td><strong>${fmtMoney(sum)}</strong></td></tr>`;
+  }).join('');
+  app.innerHTML = `
+    <div class="section-title"><h2>מעקב תשלומים חודשי</h2><div class="scribble"></div></div>
+    <div class="month-nav">
+      <button class="btn btn-ghost btn-small" onclick="shiftMonth(1)">‹ הבא</button>
+      <input type="month" value="${selMonth}" onchange="selMonth=this.value;renderMonthly()">
+      <button class="btn btn-ghost btn-small" onclick="shiftMonth(-1)">הקודם ›</button>
+      <span style="flex:1"></span>
+      <button class="btn btn-primary btn-small" onclick="openAddPayment('${children[0]?children[0].id:''}')" ${children.length===0?'disabled':''}>＋ רישום תשלום</button>
+    </div>
+    <div class="pay-summary">
+      <div class="pay-box"><div class="num">${fmtMoney(total)}</div><div class="lbl">סה״כ ${monthLabel(selMonth)}</div></div>
+      <div class="pay-box"><div class="num">${list.length}</div><div class="lbl">תשלומים שנרשמו</div></div>
+      <div class="pay-box"><div class="num">${Object.keys(perChild).length}</div><div class="lbl">ילדים ששילמו</div></div>
+    </div>
+    ${rows?`
+      <table>
+        <tr><th>ילד/ה</th><th>מס׳ תשלומים</th><th>סה״כ</th></tr>
+        ${rows}
+        <tr style="background:#F8EEE3"><td><strong>סה״כ החודש</strong></td><td></td><td><strong>${fmtMoney(total)}</strong></td></tr>
+      </table>`
+      :`<div class="empty-state"><div class="big">💰</div>לא נרשמו תשלומים ב${monthLabel(selMonth)}.</div>`}
+    <div class="section-title"><h2>פירוט תשלומים</h2><div class="scribble"></div></div>
+    ${payRows(list.sort((a,b)=>(b.date||'').localeCompare(a.date||'')))}`;
+}
+
+init();
+</script>
+</body>
+</html>
